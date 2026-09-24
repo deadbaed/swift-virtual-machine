@@ -1,5 +1,6 @@
 {
-  pkgs ? import <nixpkgs> { },
+  sources ? import ./npins,
+  pkgs ? import sources.nixpkgs { },
 }:
 
 pkgs.stdenv.mkDerivation {

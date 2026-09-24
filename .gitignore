@@ -11,4 +11,4 @@ result*
 *.bundle
 
 *.ipsw
-*.json
+Mac*.json
