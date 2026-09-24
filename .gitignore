@@ -9,3 +9,6 @@ DerivedData/
 
 result*
 *.bundle
+
+*.ipsw
+*.json
