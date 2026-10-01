@@ -12,7 +12,7 @@ pkgs.stdenv.mkDerivation {
   nativeBuildInputs = [
     pkgs.swift
     pkgs.swiftpm
-    pkgs.apple-sdk
+    pkgs.apple-sdk_27
     pkgs.darwin.sigtool
   ];
 
