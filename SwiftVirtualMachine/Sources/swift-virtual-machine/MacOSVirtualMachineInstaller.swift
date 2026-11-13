@@ -22,7 +22,13 @@ final class MacOSVirtualMachineInstaller: NSObject, @unchecked Sendable {
 
     public func setUpVirtualMachineArtifacts() {
         VMLogger.shared.info("Creating VM bundle at \(vmBundlePath).")
-        createVMBundle()
+        do {
+            try FileManager.default.createDirectory(atPath: vmBundlePath, withIntermediateDirectories: true)
+            VMLogger.shared.info("VM bundle directory created.")
+        } catch {
+            VMLogger.shared.error("Failed to create VM bundle: \(error)")
+            fatalError("Failed to create VM bundle.")
+        }
     }
 
     public func installMacOS(ipswURL: URL) {
@@ -115,10 +121,7 @@ final class MacOSVirtualMachineInstaller: NSObject, @unchecked Sendable {
 
         VMLogger.shared.info("Validating installation VM configuration.")
         try! virtualMachineConfiguration.validate()
-
-        if #available(macOS 14.0, *) {
-            try! virtualMachineConfiguration.validateSaveRestoreSupport()
-        }
+        try! virtualMachineConfiguration.validateSaveRestoreSupport()
 
         virtualMachine = VZVirtualMachine(configuration: virtualMachineConfiguration)
         virtualMachineResponder = MacOSVirtualMachineDelegate()
@@ -139,67 +142,36 @@ final class MacOSVirtualMachineInstaller: NSObject, @unchecked Sendable {
             }
         })
 
-        installationObserver = installer.progress.observe(\.fractionCompleted, options: [.initial, .new]) { (progress, change) in
-            var percentageProgress = change.newValue! * 100
-            percentageProgress.round(.towardZero)
-
-            VMLogger.shared.info("Installation progress: \(Int(percentageProgress))%")
+        installationObserver = installer.progress.observe(\.fractionCompleted, options: [.initial, .new]) { _, change in
+            VMLogger.shared.info("Installation progress: \(Int(change.newValue! * 100))%")
         }
-    }
-
-    private func createVMBundle() {
-        do {
-            try FileManager.default.createDirectory(atPath: vmBundlePath, withIntermediateDirectories: true)
-            VMLogger.shared.info("VM bundle directory created.")
-        } catch {
-            VMLogger.shared.error("Failed to create VM bundle: \(error)")
-            fatalError("Failed to create VM bundle.")
-        }
-    }
-
-    @available(macOS 16.0, *)
-    private func createASIFDiskImage() {
-        VMLogger.shared.info("Creating ASIF disk image at \(diskImageURL.path).")
-        do {
-            let process = try Process.run(
-                URL(fileURLWithPath: "/usr/sbin/diskutil"),
-                arguments: ["image", "create", "blank", "--fs", "none", "--format", "ASIF", "--size", "80GiB", diskImageURL.path]
-            )
-            process.waitUntilExit()
-            if process.terminationStatus != 0 {
-                fatalError("Failed to create the disk image.")
-            }
-            VMLogger.shared.info("ASIF disk image created.")
-        } catch {
-            VMLogger.shared.error("Failed to create ASIF disk image: \(error.localizedDescription)")
-            fatalError("Failed to launch diskutil: \(error.localizedDescription)")
-        }
-    }
-
-    private func createRAWDiskImage() {
-        VMLogger.shared.info("Creating blank RAW disk image at \(diskImageURL.path) (128 GiB).")
-        let diskFd = open(diskImageURL.path, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR)
-        if diskFd == -1 {
-            fatalError("Cannot create disk image.")
-        }
-
-        var result = ftruncate(diskFd, 128 * 1024 * 1024 * 1024)
-        if result != 0 {
-            fatalError("ftruncate() failed.")
-        }
-
-        result = close(diskFd)
-        if result != 0 {
-            fatalError("Failed to close the disk image.")
-        }
-        VMLogger.shared.info("RAW disk image created.")
     }
 
     private func createDiskImage() {
-        if #available(macOS 16.0, *) {
-            createASIFDiskImage()
-        } else {
-            createRAWDiskImage()
+        let sizeGiB = 80
+        VMLogger.shared.info("Creating disk image at \(diskImageURL.path) (\(sizeGiB) GiB).")
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/diskutil")
+        process.arguments = ["image", "create", "blank", "--fs", "none", "--format", "ASIF", "--size", "\(sizeGiB)GiB", diskImageURL.path]
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = outputPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            guard process.terminationStatus == 0 else {
+                let stderr = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let stderr { VMLogger.shared.error("diskutil: \(stderr)") }
+                fatalError("Failed to create disk image (exit code \(process.terminationStatus)).")
+            }
+            VMLogger.shared.info("Disk image created (\(sizeGiB) GiB).")
+        } catch {
+            VMLogger.shared.error("Failed to create disk image: \(error.localizedDescription)")
+            fatalError("Failed to launch diskutil: \(error.localizedDescription)")
         }
     }
 }
