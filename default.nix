@@ -25,7 +25,7 @@ pkgs.stdenv.mkDerivation {
     cp .build/release/swift-virtual-machine $out/bin/
   '';
 
-  postFixup = pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+  postFixup = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
     codesign --sign - --force \
     --entitlements ${./SwiftVirtualMachine/swift-virtual-machine.entitlements} \
     $out/bin/swift-virtual-machine
