@@ -7,8 +7,8 @@ func printUsage() {
 Usage: swift-virtual-machine <command> [options]
 
 Commands:
-  install <ipsw-path>    Install macOS from an IPSW file
-  run                    Launch the virtual machine
+  install <ipsw-path>            Install macOS from an IPSW file
+  run [provisioning-script-path] Launch the virtual machine, optionally running a script after first boot
 """)
 }
 
@@ -42,8 +42,12 @@ case "install":
 
 case "run":
     VMLogger.shared.info("Launching virtual machine runner.")
+    let provisioningScript = CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : nil
+    if let script = provisioningScript {
+        VMLogger.shared.info("Provisioning script specified: \(script)")
+    }
     let runner = MacOSVirtualMachineRunner()
-    runner.run()
+    runner.run(provisioningScriptPath: provisioningScript)
 
 default:
     print("Unknown command: \(command)")
