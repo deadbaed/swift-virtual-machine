@@ -145,7 +145,7 @@ final class MacOSVirtualMachineInstaller: NSObject, @unchecked Sendable {
         do {
             let process = try Process.run(
                 URL(fileURLWithPath: "/usr/sbin/diskutil"),
-                arguments: ["image", "create", "blank", "--fs", "none", "--format", "ASIF", "--size", "128GiB", diskImageURL.path]
+                arguments: ["image", "create", "blank", "--fs", "none", "--format", "ASIF", "--size", "80GiB", diskImageURL.path]
             )
             process.waitUntilExit()
             if process.terminationStatus != 0 {
