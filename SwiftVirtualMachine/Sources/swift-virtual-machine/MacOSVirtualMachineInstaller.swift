@@ -5,12 +5,12 @@ import Foundation
 
 class MacOSVirtualMachineDelegate: NSObject, VZVirtualMachineDelegate {
     func virtualMachine(_ virtualMachine: VZVirtualMachine, didStopWithError error: Error) {
-        NSLog("Virtual machine did stop with error: \(error.localizedDescription)")
+        VMLogger.shared.error("Virtual machine did stop with error: \(error.localizedDescription)")
         exit(-1)
     }
 
     func guestDidStop(_ virtualMachine: VZVirtualMachine) {
-        NSLog("Guest did stop virtual machine.")
+        VMLogger.shared.info("Guest did stop virtual machine.")
         exit(0)
     }
 }
@@ -21,16 +21,19 @@ final class MacOSVirtualMachineInstaller: NSObject, @unchecked Sendable {
     private var virtualMachineResponder: MacOSVirtualMachineDelegate?
 
     public func setUpVirtualMachineArtifacts() {
+        VMLogger.shared.info("Creating VM bundle at \(vmBundlePath).")
         createVMBundle()
     }
 
     public func installMacOS(ipswURL: URL) {
-        NSLog("Attempting to install from IPSW at \(ipswURL).")
+        VMLogger.shared.info("Attempting to install from IPSW at \(ipswURL.path).")
         VZMacOSRestoreImage.load(from: ipswURL, completionHandler: { [self] (result: Result<VZMacOSRestoreImage, Error>) in
             switch result {
             case let .failure(error):
+                VMLogger.shared.error("Failed to load restore image: \(error.localizedDescription)")
                 fatalError(error.localizedDescription)
             case let .success(restoreImage):
+                VMLogger.shared.info("Restore image loaded successfully.")
                 installMacOS(restoreImage: restoreImage)
             }
         })
@@ -40,6 +43,7 @@ final class MacOSVirtualMachineInstaller: NSObject, @unchecked Sendable {
         guard let macOSConfiguration = restoreImage.mostFeaturefulSupportedConfiguration else {
             fatalError("No supported configuration available.")
         }
+        VMLogger.shared.info("Selected macOS configuration: minimum CPUs=\(macOSConfiguration.minimumSupportedCPUCount), minimum memory=\(formatBytes(macOSConfiguration.minimumSupportedMemorySize))")
 
         if !macOSConfiguration.hardwareModel.isSupported {
             fatalError("macOSConfiguration configuration isn't supported on the current host.")
@@ -61,20 +65,29 @@ final class MacOSVirtualMachineInstaller: NSObject, @unchecked Sendable {
                 options: [VZMacAuxiliaryStorage.InitializationOptions.allowOverwrite]
             )
             macPlatformConfiguration.auxiliaryStorage = auxiliaryStorage
+            VMLogger.shared.info("Created auxiliary storage at \(auxiliaryStorageURL.path).")
         } catch {
+            VMLogger.shared.error("Failed to create auxiliary storage: \(error)")
             fatalError("Failed to create auxiliary storage: \(error)")
         }
 
         macPlatformConfiguration.hardwareModel = macOSConfiguration.hardwareModel
         macPlatformConfiguration.machineIdentifier = VZMacMachineIdentifier()
 
-        try! macPlatformConfiguration.hardwareModel.dataRepresentation.write(to: hardwareModelURL)
-        try! macPlatformConfiguration.machineIdentifier.dataRepresentation.write(to: machineIdentifierURL)
+        do {
+            try macPlatformConfiguration.hardwareModel.dataRepresentation.write(to: hardwareModelURL)
+            try macPlatformConfiguration.machineIdentifier.dataRepresentation.write(to: machineIdentifierURL)
+            VMLogger.shared.info("Saved hardware model (\(macPlatformConfiguration.hardwareModel.dataRepresentation.count) bytes) and machine identifier (\(macPlatformConfiguration.machineIdentifier.dataRepresentation.count) bytes).")
+        } catch {
+            VMLogger.shared.error("Failed to save platform artifacts: \(error)")
+            fatalError("Failed to write platform configuration files: \(error)")
+        }
 
         return macPlatformConfiguration
     }
 
     private func setupVirtualMachine(macOSConfiguration: VZMacOSConfigurationRequirements) {
+        VMLogger.shared.info("Configuring virtual machine for installation.")
         let virtualMachineConfiguration = VZVirtualMachineConfiguration()
 
         virtualMachineConfiguration.platform = createMacPlatformConfiguration(macOSConfiguration: macOSConfiguration)
@@ -100,6 +113,7 @@ final class MacOSVirtualMachineInstaller: NSObject, @unchecked Sendable {
         virtualMachineConfiguration.pointingDevices = [MacOSVirtualMachineConfigurationHelper.createPointingDeviceConfiguration()]
         virtualMachineConfiguration.keyboards = [MacOSVirtualMachineConfigurationHelper.createKeyboardConfiguration()]
 
+        VMLogger.shared.info("Validating installation VM configuration.")
         try! virtualMachineConfiguration.validate()
 
         if #available(macOS 14.0, *) {
@@ -109,17 +123,19 @@ final class MacOSVirtualMachineInstaller: NSObject, @unchecked Sendable {
         virtualMachine = VZVirtualMachine(configuration: virtualMachineConfiguration)
         virtualMachineResponder = MacOSVirtualMachineDelegate()
         virtualMachine.delegate = virtualMachineResponder
+        VMLogger.shared.info("Virtual machine configured and ready for installation.")
     }
 
     private func startInstallation(restoreImageURL: URL) {
         let installer = VZMacOSInstaller(virtualMachine: virtualMachine, restoringFromImageAt: restoreImageURL)
 
-        NSLog("Starting installation.")
+        VMLogger.shared.info("Starting installation from \(restoreImageURL.path).")
         installer.install(completionHandler: { (result: Result<Void, Error>) in
             if case let .failure(error) = result {
+                VMLogger.shared.error("Installation failed: \(error.localizedDescription)")
                 fatalError(error.localizedDescription)
             } else {
-                NSLog("Installation succeeded.")
+                VMLogger.shared.info("Installation succeeded.")
             }
         })
 
@@ -127,21 +143,23 @@ final class MacOSVirtualMachineInstaller: NSObject, @unchecked Sendable {
             var percentageProgress = change.newValue! * 100
             percentageProgress.round(.towardZero)
 
-            NSLog("Installation progress: \(Int(percentageProgress)).")
-            // NSLog("Installation progress: \(change.newValue! * 100).")
+            VMLogger.shared.info("Installation progress: \(Int(percentageProgress))%")
         }
     }
 
     private func createVMBundle() {
         do {
             try FileManager.default.createDirectory(atPath: vmBundlePath, withIntermediateDirectories: true)
+            VMLogger.shared.info("VM bundle directory created.")
         } catch {
+            VMLogger.shared.error("Failed to create VM bundle: \(error)")
             fatalError("Failed to create VM bundle.")
         }
     }
 
     @available(macOS 16.0, *)
     private func createASIFDiskImage() {
+        VMLogger.shared.info("Creating ASIF disk image at \(diskImageURL.path).")
         do {
             let process = try Process.run(
                 URL(fileURLWithPath: "/usr/sbin/diskutil"),
@@ -151,12 +169,15 @@ final class MacOSVirtualMachineInstaller: NSObject, @unchecked Sendable {
             if process.terminationStatus != 0 {
                 fatalError("Failed to create the disk image.")
             }
+            VMLogger.shared.info("ASIF disk image created.")
         } catch {
+            VMLogger.shared.error("Failed to create ASIF disk image: \(error.localizedDescription)")
             fatalError("Failed to launch diskutil: \(error.localizedDescription)")
         }
     }
 
     private func createRAWDiskImage() {
+        VMLogger.shared.info("Creating blank RAW disk image at \(diskImageURL.path) (128 GiB).")
         let diskFd = open(diskImageURL.path, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR)
         if diskFd == -1 {
             fatalError("Cannot create disk image.")
@@ -171,6 +192,7 @@ final class MacOSVirtualMachineInstaller: NSObject, @unchecked Sendable {
         if result != 0 {
             fatalError("Failed to close the disk image.")
         }
+        VMLogger.shared.info("RAW disk image created.")
     }
 
     private func createDiskImage() {

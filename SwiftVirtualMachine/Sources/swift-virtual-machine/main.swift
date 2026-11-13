@@ -18,6 +18,7 @@ if CommandLine.arguments.count < 2 {
 }
 
 let command = CommandLine.arguments[1]
+VMLogger.shared.info("Command received: \(command)")
 
 switch command {
 case "install":
@@ -26,18 +27,21 @@ case "install":
         exit(-1)
     }
     let ipswPath = CommandLine.arguments[2]
+    VMLogger.shared.info("Install requested with IPSW: \(ipswPath)")
     let ipswURL = URL(fileURLWithPath: ipswPath)
     guard ipswURL.isFileURL else {
         fatalError("The provided IPSW path is not a valid file URL.")
     }
 
     let installer = MacOSVirtualMachineInstaller()
+    VMLogger.shared.info("Setting up virtual machine artifacts.")
     installer.setUpVirtualMachineArtifacts()
     installer.installMacOS(ipswURL: ipswURL)
 
     dispatchMain()
 
 case "run":
+    VMLogger.shared.info("Launching virtual machine runner.")
     let runner = MacOSVirtualMachineRunner()
     runner.run()
 
