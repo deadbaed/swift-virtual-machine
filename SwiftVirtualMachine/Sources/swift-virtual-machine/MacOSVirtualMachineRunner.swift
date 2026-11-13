@@ -174,7 +174,8 @@ class MacOSVirtualMachineRunner: NSObject {
         }
 
         VMLogger.shared.info("Starting post-boot provisioning with script \(scriptPath) on \(ipAddress).")
-        DispatchQueue.global(qos: .background).async { [weak self] in
+        VMLogger.shared.info("Waiting 20 seconds for SSH to become available...")
+        DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 20) { [weak self] in
             self?.attemptProvisioning(ipAddress: ipAddress, scriptPath: scriptPath, retriesLeft: 60)
         }
     }
