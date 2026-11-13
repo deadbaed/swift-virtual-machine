@@ -63,12 +63,6 @@ struct MacOSVirtualMachineConfigurationHelper {
     }
 
     static func createKeyboardConfiguration() -> VZKeyboardConfiguration {
-        // // TODO: remove as this only for macos 27
-        // if #available(macOS 14.0, *) {
-        //     return VZMacKeyboardConfiguration()
-        // } else {
-        //     return VZUSBKeyboardConfiguration()
-        // }
         return VZMacKeyboardConfiguration()
     }
 }
