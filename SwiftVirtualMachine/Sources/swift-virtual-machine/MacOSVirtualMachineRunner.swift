@@ -4,8 +4,10 @@ import Foundation
 #if arch(arm64)
 
 class MacOSVirtualMachineRunner: NSObject {
+    private static let virtualMachineMACAddress = "d6:a7:58:8e:78:d4"
     private var virtualMachine: VZVirtualMachine!
     private var virtualMachineResponder: MacOSVirtualMachineDelegate?
+    private var ipAddressDispatchSource: DispatchSourceTimer?
 
     func run() {
         DispatchQueue.main.async { [self] in
@@ -97,11 +99,58 @@ class MacOSVirtualMachineRunner: NSObject {
     // MARK: - VM Lifecycle
 
     private func startVirtualMachine() {
-        virtualMachine.start(completionHandler: { (result) in
-            if case let .failure(error) = result {
-                fatalError("Virtual machine failed to start with \(error)")
+        if #available(macOS 27.0, *) {
+            let startOptions = createMacOSStartOptions()
+            virtualMachine.start(options: startOptions, completionHandler: { (error) in
+                if let error {
+                    fatalError("Virtual machine failed to start with \(error)")
+                } else {
+                    self.startPollingForIPAddress()
+                }
+            })
+        } else {
+            virtualMachine.start(completionHandler: { (result) in
+                if case let .failure(error) = result {
+                    fatalError("Virtual machine failed to start with \(error)")
+                } else {
+                    self.startPollingForIPAddress()
+                }
+            })
+        }
+    }
+
+    private func startPollingForIPAddress() {
+        // Poll the host DHCP lease file until the VM receives an IP address.
+        NSLog("Polling for virtual machine IP address...")
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 1.0, repeating: 1.0)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            if let ipAddress = DHCPLeaseParser.ipAddress(forMACAddress: Self.virtualMachineMACAddress) {
+                NSLog("Virtual machine IP address: \(ipAddress)")
+                timer.cancel()
+                self.ipAddressDispatchSource = nil
             }
-        })
+        }
+        ipAddressDispatchSource = timer
+        timer.resume()
+    }
+
+    @available(macOS 27.0, *)
+    private func createMacOSStartOptions() -> VZMacOSVirtualMachineStartOptions {
+        let startOptions = VZMacOSVirtualMachineStartOptions()
+        let provisioningOptions = VZMacGuestProvisioningOptions()
+        let user = "user"
+        provisioningOptions.fullName = user
+        provisioningOptions.username = user
+        provisioningOptions.password = "password"
+        provisioningOptions.enablesRemoteLogin = true
+        do {
+            try startOptions.setGuestProvisioning(provisioningOptions)
+        } catch {
+            fatalError("Failed to set guest provisioning options: \(error)")
+        }
+        return startOptions
     }
 
     private func resumeVirtualMachine() {
