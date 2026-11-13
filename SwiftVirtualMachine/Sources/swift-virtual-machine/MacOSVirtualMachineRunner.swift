@@ -5,14 +5,18 @@ import Foundation
 
 class MacOSVirtualMachineRunner: NSObject {
     private static let virtualMachineMACAddress = "d6:a7:58:8e:78:d4"
+    private static let virtualMachineUser = "user"
+    private static let virtualMachinePassword = "password"
     private var virtualMachine: VZVirtualMachine!
     private var virtualMachineConfiguration: VZVirtualMachineConfiguration?
     private var virtualMachineResponder: MacOSVirtualMachineDelegate?
     private var ipAddressDispatchSource: DispatchSourceTimer?
     private var signalSources: [DispatchSourceSignal] = []
     private var isShuttingDown = false
+    private var provisioningScriptPath: String?
 
-    func run() {
+    func run(provisioningScriptPath: String? = nil) {
+        self.provisioningScriptPath = provisioningScriptPath
         VMLogger.shared.info("VM runner started.")
         DispatchQueue.main.async { [self] in
             createVirtualMachine()
@@ -150,22 +154,82 @@ class MacOSVirtualMachineRunner: NSObject {
                 VMLogger.shared.info("Virtual machine IP address: \(ipAddress)")
                 timer.cancel()
                 self.ipAddressDispatchSource = nil
+                self.beginProvisioning(ipAddress: ipAddress)
             }
         }
         ipAddressDispatchSource = timer
         timer.resume()
     }
 
+    private func beginProvisioning(ipAddress: String) {
+        guard let scriptPath = provisioningScriptPath else {
+            VMLogger.shared.info("No provisioning script configured; skipping post-boot provisioning.")
+            return
+        }
+
+        let markerPath = provisioningMarkerURL.path
+        if FileManager.default.fileExists(atPath: markerPath) {
+            VMLogger.shared.info("Provisioning marker exists at \(markerPath); skipping post-boot provisioning.")
+            return
+        }
+
+        VMLogger.shared.info("Starting post-boot provisioning with script \(scriptPath) on \(ipAddress).")
+        DispatchQueue.global(qos: .background).async { [weak self] in
+            self?.attemptProvisioning(ipAddress: ipAddress, scriptPath: scriptPath, retriesLeft: 60)
+        }
+    }
+
+    private func attemptProvisioning(ipAddress: String, scriptPath: String, retriesLeft: Int) {
+        do {
+            let result = try SSHProvisioner.runScript(
+                host: ipAddress,
+                username: Self.virtualMachineUser,
+                password: Self.virtualMachinePassword,
+                scriptPath: scriptPath
+            )
+            VMLogger.shared.info("Provisioning finished with exit code \(result.exitStatus).")
+            if !result.stdout.isEmpty {
+                VMLogger.shared.info("Provisioning stdout:\n\(result.stdout)")
+            }
+            if !result.stderr.isEmpty {
+                VMLogger.shared.warn("Provisioning stderr:\n\(result.stderr)")
+            }
+
+            if result.exitStatus == 0 {
+                createProvisioningMarker()
+            } else {
+                VMLogger.shared.error("Provisioning script exited with status \(result.exitStatus); marker not written.")
+            }
+        } catch {
+            guard retriesLeft > 0 else {
+                VMLogger.shared.error("Provisioning failed after retries: \(error)")
+                return
+            }
+            VMLogger.shared.info("Provisioning attempt failed: \(error). Retrying in 5 seconds...")
+            DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 5) { [weak self] in
+                self?.attemptProvisioning(ipAddress: ipAddress, scriptPath: scriptPath, retriesLeft: retriesLeft - 1)
+            }
+        }
+    }
+
+    private func createProvisioningMarker() {
+        let markerPath = provisioningMarkerURL.path
+        guard FileManager.default.createFile(atPath: markerPath, contents: Data(), attributes: nil) else {
+            VMLogger.shared.warn("Failed to create provisioning marker at \(markerPath).")
+            return
+        }
+        VMLogger.shared.info("Created provisioning marker at \(markerPath).")
+    }
+
     @available(macOS 27.0, *)
     private func createMacOSStartOptions() -> VZMacOSVirtualMachineStartOptions {
         let startOptions = VZMacOSVirtualMachineStartOptions()
         let provisioningOptions = VZMacGuestProvisioningOptions()
-        let user = "user"
-        provisioningOptions.fullName = user
-        provisioningOptions.username = user
-        provisioningOptions.password = "password"
+        provisioningOptions.fullName = Self.virtualMachineUser
+        provisioningOptions.username = Self.virtualMachineUser
+        provisioningOptions.password = Self.virtualMachinePassword
         provisioningOptions.enablesRemoteLogin = true
-        VMLogger.shared.info("Configuring guest provisioning: user='\(user)', remoteLogin=\(provisioningOptions.enablesRemoteLogin)")
+        VMLogger.shared.info("Configuring guest provisioning: user='\(Self.virtualMachineUser)', remoteLogin=\(provisioningOptions.enablesRemoteLogin)")
         do {
             try startOptions.setGuestProvisioning(provisioningOptions)
         } catch {
