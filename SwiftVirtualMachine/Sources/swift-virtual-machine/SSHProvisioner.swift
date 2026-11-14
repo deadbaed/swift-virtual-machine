@@ -271,13 +271,15 @@ enum SSHProvisioner {
         scriptPath: String
     ) throws -> SSHExecResult {
         let script = try String(contentsOfFile: scriptPath, encoding: .utf8)
+        let escapedPassword = password.replacingOccurrences(of: "'", with: "'\\''")
+        let modifiedScript = "export VM_PASSWORD='\(escapedPassword)'\n" + script
         return try execute(
             host: host,
             port: port,
             username: username,
             password: password,
             command: "bash -s",
-            input: script
+            input: modifiedScript
         )
     }
 }
