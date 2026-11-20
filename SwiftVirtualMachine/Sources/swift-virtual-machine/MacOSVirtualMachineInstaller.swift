@@ -148,7 +148,7 @@ final class MacOSVirtualMachineInstaller: NSObject, @unchecked Sendable {
     }
 
     private func createDiskImage() {
-        let sizeGiB = 80
+        let sizeGiB = 100
         VMLogger.shared.info("Creating disk image at \(diskImageURL.path) (\(sizeGiB) GiB).")
 
         let process = Process()
